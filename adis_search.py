@@ -2,8 +2,11 @@
 Robuste OPAC-Suche für Stadtbücherei Düsseldorf (aDIS / ITK Rheinland).
 
 Verwendung:
-    from adis_search import search_duesseldorf
+    from adis_search import search_duesseldorf, summarize
+
     results = search_duesseldorf("Harry Potter und der Stein der Weisen")
+    print(summarize(results))
+    # → "✅ 2 verfügbar · 🔴 3 entliehen"
 
 Jedes Element der Rückgabeliste ist ein Dict mit:
     titel, status, bibliothek, standort, signatur, bestellmoeglichkeit
@@ -86,6 +89,47 @@ def validate_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         validated.append(clean)
 
     return validated
+
+
+def summarize(results: List[Dict[str, Any]]) -> str:
+    """
+    Erstellt eine kurze Verfügbarkeits-Zusammenfassung.
+
+    Beispiel:
+        "✅ 2 verfügbar · 🔴 3 entliehen · ⏳ 1 vorbestellt"
+    """
+    if not results:
+        return "Keine Exemplare gefunden."
+
+    counts = {
+        "verfügbar": 0,
+        "entliehen": 0,
+        "vorbestellt": 0,
+        "sonstige": 0,
+    }
+
+    for r in results:
+        status = (r.get("status") or "").lower()
+        if status == "verfügbar":
+            counts["verfügbar"] += 1
+        elif "entliehen" in status or "ausgeliehen" in status:
+            counts["entliehen"] += 1
+        elif "vorbestellt" in status or "reserviert" in status:
+            counts["vorbestellt"] += 1
+        else:
+            counts["sonstige"] += 1
+
+    parts = []
+    if counts["verfügbar"]:
+        parts.append(f"✅ {counts['verfügbar']} verfügbar")
+    if counts["entliehen"]:
+        parts.append(f"🔴 {counts['entliehen']} entliehen")
+    if counts["vorbestellt"]:
+        parts.append(f"⏳ {counts['vorbestellt']} vorbestellt")
+    if counts["sonstige"]:
+        parts.append(f"⚪ {counts['sonstige']} sonstige")
+
+    return " · ".join(parts) if parts else "Keine Exemplare gefunden."
 
 
 def search_duesseldorf(titel: str, max_results: int = 5) -> List[Dict[str, Any]]:
@@ -288,9 +332,17 @@ def main() -> None:
     if args.max > 0:
         results = results[: args.max]
 
+    summary = summarize(results)
+
     if args.json:
-        # Garantiert valides JSON (bereits durch validate_results geprüft)
-        print(json.dumps(results, ensure_ascii=False, indent=2))
+        # JSON enthält sowohl die Zusammenfassung als auch die Details
+        payload = {
+            "query": query,
+            "summary": summary,
+            "count": len(results),
+            "exemplare": results,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
     # Menschlich lesbare Ausgabe
@@ -298,15 +350,13 @@ def main() -> None:
         print("Keine Exemplare gefunden.")
         return
 
-    print(f"Suche nach: {query!r}\n")
+    titel = results[0]["titel"]
+    print(f"📖 {titel}")
+    print(f"   {summary}\n")
+
     for r in results:
-        print(f"📖 {r['titel']}")
-        print(f"   Bibliothek : {r['bibliothek']}")
-        print(f"   Standort   : {r['standort']}")
-        print(f"   Signatur   : {r['signatur']}")
-        print(f"   Status     : {r['status']}")
-        if r.get("bestellmoeglichkeit"):
-            print(f"   Bestellung : {r['bestellmoeglichkeit']}")
+        print(f"   • {r['bibliothek']} – {r['standort']}")
+        print(f"     {r['signatur']}  →  {r['status']}")
         print()
 
 

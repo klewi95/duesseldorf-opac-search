@@ -14,23 +14,24 @@ playwright install chromium
 ## Verwendung
 
 ```python
-from adis_search import search_duesseldorf
+from adis_search import search_duesseldorf, summarize
 
 results = search_duesseldorf("Harry Potter und der Stein der Weisen")
 
+print(summarize(results))
+# → "✅ 2 verfügbar · 🔴 3 entliehen"
+
 for r in results:
-    print(r["titel"])
-    print(f"  {r['bibliothek']} – {r['standort']}")
-    print(f"  {r['signatur']}  →  {r['status']}")
+    print(f"  {r['bibliothek']} – {r['standort']} → {r['status']}")
 ```
 
 ### CLI
 
 ```bash
-# Menschlich lesbar
+# Menschlich lesbar (mit Zusammenfassung)
 python adis_search.py "Harry Potter und der Stein der Weisen"
 
-# Valides JSON (ideal für Bots / Weiterverarbeitung)
+# Valides JSON (inkl. summary)
 python adis_search.py "Harry Potter" --json
 
 # Nur die ersten 3 Exemplare
@@ -39,6 +40,7 @@ python adis_search.py "Sapiens" --json --max 3
 
 ## Rückgabe
 
+### `search_duesseldorf()`
 Liste von Dictionaries (nach Validierung):
 
 | Schlüssel              | Beschreibung                          |
@@ -50,7 +52,11 @@ Liste von Dictionaries (nach Validierung):
 | `signatur`             | Signatur                              |
 | `bestellmoeglichkeit`  | z. B. Standardleihfrist (28 Tage)     |
 
-Die Funktion `validate_results()` stellt sicher, dass jedes Dict alle erforderlichen Schlüssel besitzt und die Werte Strings sind.
+### `summarize(results)`
+Kurzer Übersichtstext, z. B.:
+```
+✅ 2 verfügbar · 🔴 3 entliehen · ⏳ 1 vorbestellt
+```
 
 ## Hinweise
 
