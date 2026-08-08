@@ -27,12 +27,19 @@ for r in results:
 ### CLI
 
 ```bash
+# Menschlich lesbar
 python adis_search.py "Harry Potter und der Stein der Weisen"
+
+# Valides JSON (ideal für Bots / Weiterverarbeitung)
+python adis_search.py "Harry Potter" --json
+
+# Nur die ersten 3 Exemplare
+python adis_search.py "Sapiens" --json --max 3
 ```
 
 ## Rückgabe
 
-Liste von Dictionaries:
+Liste von Dictionaries (nach Validierung):
 
 | Schlüssel              | Beschreibung                          |
 |------------------------|---------------------------------------|
@@ -42,6 +49,8 @@ Liste von Dictionaries:
 | `standort`             | Regal / Bereich                       |
 | `signatur`             | Signatur                              |
 | `bestellmoeglichkeit`  | z. B. Standardleihfrist (28 Tage)     |
+
+Die Funktion `validate_results()` stellt sicher, dass jedes Dict alle erforderlichen Schlüssel besitzt und die Werte Strings sind.
 
 ## Hinweise
 

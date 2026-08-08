@@ -11,9 +11,12 @@ Jedes Element der Rückgabeliste ist ein Dict mit:
 
 from __future__ import annotations
 
-import re
+import argparse
+import json
 import logging
-from typing import List, Dict, Any
+import re
+import sys
+from typing import Any, Dict, List
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
@@ -21,6 +24,16 @@ logger = logging.getLogger(__name__)
 
 # Freundliche Start-URL (redirectet intern auf den korrekten DirectLink mit SOPAC07)
 OPAC_START = "https://opac-duesseldorf.itk-rheinland.de/"
+
+# Erwartete Schlüssel eines Ergebnis-Dicts (für Validierung)
+REQUIRED_KEYS = {
+    "titel",
+    "status",
+    "bibliothek",
+    "standort",
+    "signatur",
+    "bestellmoeglichkeit",
+}
 
 
 def _normalize_status(raw: str) -> str:
@@ -38,6 +51,41 @@ def _normalize_status(raw: str) -> str:
     if "nicht ausleihbar" in t or "präsenz" in t:
         return "nicht ausleihbar"
     return raw.strip() or "unbekannt"
+
+
+def validate_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Prüft, dass jedes Ergebnis-Dict die erwarteten Schlüssel besitzt und
+    die Werte sinnvolle Typen haben. Ungültige Einträge werden entfernt
+    und eine Warnung geloggt.
+    """
+    validated: List[Dict[str, Any]] = []
+
+    for i, item in enumerate(results):
+        if not isinstance(item, dict):
+            logger.warning("Ergebnis #%d ist kein Dict – übersprungen", i)
+            continue
+
+        missing = REQUIRED_KEYS - set(item.keys())
+        if missing:
+            logger.warning(
+                "Ergebnis #%d fehlt Schlüssel %s – übersprungen", i, sorted(missing)
+            )
+            continue
+
+        # Einfache Typ-Checks
+        if not isinstance(item["titel"], str) or not item["titel"].strip():
+            logger.warning("Ergebnis #%d: 'titel' ungültig – übersprungen", i)
+            continue
+
+        # Stelle sicher, dass alle Werte Strings sind (None → "")
+        clean = {
+            key: (str(item.get(key) or "").strip())
+            for key in REQUIRED_KEYS
+        }
+        validated.append(clean)
+
+    return validated
 
 
 def search_duesseldorf(titel: str, max_results: int = 5) -> List[Dict[str, Any]]:
@@ -195,28 +243,72 @@ def search_duesseldorf(titel: str, max_results: int = 5) -> List[Dict[str, Any]]
         finally:
             browser.close()
 
-    return ergebnisse
+    # Validierung der Struktur vor Rückgabe
+    return validate_results(ergebnisse)
 
 
 # ---------------------------------------------------------------------------
-# CLI-Test
+# CLI
 # ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    import sys
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Suche im OPAC der Stadtbüchereien Düsseldorf"
+    )
+    parser.add_argument(
+        "titel",
+        nargs="*",
+        help="Suchbegriff / Titel",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Ergebnis als valides JSON ausgeben",
+    )
+    parser.add_argument(
+        "--max",
+        type=int,
+        default=0,
+        help="Maximale Anzahl Exemplare (0 = alle)",
+    )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Ausführliche Logs",
+    )
+    args = parser.parse_args()
 
-    q = " ".join(sys.argv[1:]) or "Harry Potter und der Stein der Weisen"
-    print(f"Suche nach: {q!r}\n")
-    results = search_duesseldorf(q)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.WARNING,
+        format="%(levelname)s: %(message)s",
+    )
+
+    query = " ".join(args.titel).strip() or "Harry Potter und der Stein der Weisen"
+    results = search_duesseldorf(query)
+
+    if args.max > 0:
+        results = results[: args.max]
+
+    if args.json:
+        # Garantiert valides JSON (bereits durch validate_results geprüft)
+        print(json.dumps(results, ensure_ascii=False, indent=2))
+        return
+
+    # Menschlich lesbare Ausgabe
     if not results:
         print("Keine Exemplare gefunden.")
-    else:
-        for r in results:
-            print(f"📖 {r['titel']}")
-            print(f"   Bibliothek : {r['bibliothek']}")
-            print(f"   Standort   : {r['standort']}")
-            print(f"   Signatur   : {r['signatur']}")
-            print(f"   Status     : {r['status']}")
-            if r.get("bestellmoeglichkeit"):
-                print(f"   Bestellung : {r['bestellmoeglichkeit']}")
-            print()
+        return
+
+    print(f"Suche nach: {query!r}\n")
+    for r in results:
+        print(f"📖 {r['titel']}")
+        print(f"   Bibliothek : {r['bibliothek']}")
+        print(f"   Standort   : {r['standort']}")
+        print(f"   Signatur   : {r['signatur']}")
+        print(f"   Status     : {r['status']}")
+        if r.get("bestellmoeglichkeit"):
+            print(f"   Bestellung : {r['bestellmoeglichkeit']}")
+        print()
+
+
+if __name__ == "__main__":
+    main()
