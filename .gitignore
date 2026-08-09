@@ -3,5 +3,7 @@ __pycache__/
 *.pyc
 .DS_Store
 watchlist.json
+scheduler.json
+check_watchlist.sh
 *.html
 discover_*.py
