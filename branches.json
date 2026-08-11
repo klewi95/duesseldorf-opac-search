@@ -1,0 +1,194 @@
+{
+  "source_url": "https://www.duesseldorf.de/stadtbuechereien/wer-wir-sind/kontakt",
+  "verified_on": "2026-08-09",
+  "branches": [
+    {
+      "name": "Zentralbibliothek",
+      "aliases": ["Zentralbibliothek Düsseldorf", "Zentralbibliothek KAP1"],
+      "address": "Konrad-Adenauer-Platz 1, 40210 Düsseldorf",
+      "url": "https://www.duesseldorf.de/stadtbuechereien/standorte/zentralbibliothek",
+      "hours": {
+        "mon": [{"from": "09:00", "to": "21:00"}],
+        "tue": [{"from": "09:00", "to": "21:00"}],
+        "wed": [{"from": "09:00", "to": "21:00"}],
+        "thu": [{"from": "09:00", "to": "21:00"}],
+        "fri": [{"from": "09:00", "to": "21:00"}],
+        "sat": [{"from": "09:00", "to": "18:00"}],
+        "sun": [{"from": "13:00", "to": "18:00"}]
+      }
+    },
+    {
+      "name": "Bücherei Benrath",
+      "aliases": ["Stadtteilbücherei Benrath", "Benrath"],
+      "address": "Urdenbacher Allee 6, 40593 Düsseldorf",
+      "url": "https://www.duesseldorf.de/stadtbuechereien/standorte/benrath",
+      "hours": {
+        "mon": [{"from": "14:00", "to": "19:00"}],
+        "wed": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "thu": [{"from": "14:00", "to": "19:00"}],
+        "fri": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "sat": [{"from": "11:00", "to": "13:00"}]
+      }
+    },
+    {
+      "name": "Bücherei Bilk",
+      "aliases": ["Stadtteilbücherei Bilk", "Bilk"],
+      "address": "Friedrichstraße 127, 40217 Düsseldorf",
+      "url": "https://www.duesseldorf.de/stadtbuechereien/standorte/bilk",
+      "hours": {
+        "mon": [{"from": "14:00", "to": "19:00"}],
+        "wed": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "thu": [{"from": "14:00", "to": "19:00"}],
+        "fri": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "sat": [{"from": "11:00", "to": "18:00"}, {"from": "13:00", "to": "18:00", "access": "self_service"}],
+        "sun": [{"from": "13:00", "to": "18:00", "access": "self_service"}]
+      }
+    },
+    {
+      "name": "Bücherei Derendorf",
+      "aliases": ["Stadtteilbücherei Derendorf", "Derendorf"],
+      "address": "Blücherstraße 10, 40477 Düsseldorf",
+      "hours": {
+        "mon": [{"from": "14:00", "to": "19:00"}],
+        "wed": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "thu": [{"from": "14:00", "to": "19:00"}],
+        "fri": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "sat": [{"from": "11:00", "to": "13:00"}]
+      }
+    },
+    {
+      "name": "Bücherei Eller",
+      "aliases": ["Stadtteilbücherei Eller", "Eller"],
+      "address": "Gertrudisplatz 16-18, 40229 Düsseldorf",
+      "hours": {
+        "mon": [{"from": "14:00", "to": "19:00"}],
+        "wed": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "thu": [{"from": "14:00", "to": "19:00"}],
+        "fri": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "sat": [{"from": "11:00", "to": "18:00"}, {"from": "13:00", "to": "18:00", "access": "self_service"}],
+        "sun": [{"from": "13:00", "to": "18:00", "access": "self_service"}]
+      }
+    },
+    {
+      "name": "Bücherei Flingern",
+      "aliases": ["Stadtteilbücherei Flingern", "Flingern"],
+      "address": "Hoffeldstraße 69, 40235 Düsseldorf",
+      "hours": {
+        "mon": [{"from": "14:00", "to": "19:00"}],
+        "wed": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "thu": [{"from": "14:00", "to": "19:00"}],
+        "fri": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "sat": [{"from": "11:00", "to": "13:00"}]
+      }
+    },
+    {
+      "name": "Bücherei Garath",
+      "aliases": ["Stadtteilbücherei Garath", "Garath"],
+      "address": "Fritz-Erler-Straße 21, 40595 Düsseldorf",
+      "hours": {
+        "mon": [{"from": "14:00", "to": "19:00"}],
+        "wed": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "thu": [{"from": "14:00", "to": "19:00"}],
+        "fri": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "sat": [{"from": "11:00", "to": "13:00"}]
+      }
+    },
+    {
+      "name": "Bücherei Gerresheim",
+      "aliases": ["Stadtteilbücherei Gerresheim", "Gerresheim"],
+      "address": "Heyestraße 4, 40625 Düsseldorf",
+      "hours": {
+        "mon": [{"from": "14:00", "to": "19:00"}],
+        "wed": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "thu": [{"from": "14:00", "to": "19:00"}],
+        "fri": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "sat": [{"from": "11:00", "to": "18:00"}, {"from": "13:00", "to": "18:00", "access": "self_service"}],
+        "sun": [{"from": "13:00", "to": "18:00", "access": "self_service"}]
+      }
+    },
+    {
+      "name": "Kinderbücherei Hassels",
+      "aliases": ["Bücherei Hassels", "Hassels"],
+      "address": "In der Donk 66, 40599 Düsseldorf",
+      "hours": {
+        "mon": [{"from": "14:00", "to": "17:00"}],
+        "wed": [{"from": "14:00", "to": "17:00"}],
+        "thu": [{"from": "14:00", "to": "17:00"}],
+        "fri": [{"from": "14:00", "to": "17:00"}]
+      }
+    },
+    {
+      "name": "Bücherei Kaiserswerth",
+      "aliases": ["Stadtteilbücherei Kaiserswerth", "Kaiserswerth"],
+      "address": "Kaiserswerther Markt 22, 40489 Düsseldorf",
+      "hours": {
+        "mon": [{"from": "14:00", "to": "19:00"}],
+        "wed": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "thu": [{"from": "14:00", "to": "19:00"}],
+        "fri": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "sat": [{"from": "11:00", "to": "13:00"}]
+      }
+    },
+    {
+      "name": "Bücherei Oberkassel",
+      "aliases": ["Stadtteilbücherei Oberkassel", "Oberkassel"],
+      "address": "Luegallee 65, 40545 Düsseldorf",
+      "hours": {
+        "mon": [{"from": "14:00", "to": "19:00"}],
+        "wed": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "thu": [{"from": "14:00", "to": "19:00"}],
+        "fri": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "sat": [{"from": "11:00", "to": "13:00"}]
+      }
+    },
+    {
+      "name": "Bücherei Rath",
+      "aliases": ["Stadtteilbücherei Rath", "Rath"],
+      "address": "Westfalenstraße 24, 40472 Düsseldorf",
+      "hours": {
+        "mon": [{"from": "14:00", "to": "19:00"}],
+        "wed": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "thu": [{"from": "14:00", "to": "19:00"}],
+        "fri": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "sat": [{"from": "11:00", "to": "13:00"}]
+      }
+    },
+    {
+      "name": "Bücherei Unterbach",
+      "aliases": ["Stadtteilbücherei Unterbach", "Unterbach"],
+      "address": "Breidenplatz 8, 40627 Düsseldorf",
+      "hours": {
+        "mon": [{"from": "14:00", "to": "19:00"}],
+        "thu": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "19:00"}],
+        "fri": [{"from": "14:00", "to": "19:00"}],
+        "sat": [{"from": "11:00", "to": "18:00", "access": "self_service"}],
+        "sun": [{"from": "11:00", "to": "18:00", "access": "self_service"}]
+      }
+    },
+    {
+      "name": "Bücherei Unterrath",
+      "aliases": ["Stadtteilbücherei Unterrath", "Unterrath"],
+      "address": "Eckenerstraße 1, 40468 Düsseldorf",
+      "hours": {
+        "mon": [{"from": "14:00", "to": "19:00"}],
+        "wed": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "thu": [{"from": "14:00", "to": "19:00"}],
+        "fri": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "sat": [{"from": "11:00", "to": "13:00"}]
+      }
+    },
+    {
+      "name": "Bücherei Wersten",
+      "aliases": ["Stadtteilbücherei Wersten", "Wersten"],
+      "address": "Liebfrauenstraße 1, 40591 Düsseldorf",
+      "hours": {
+        "mon": [{"from": "14:00", "to": "19:00"}],
+        "wed": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "thu": [{"from": "14:00", "to": "19:00"}],
+        "fri": [{"from": "11:00", "to": "13:00"}, {"from": "14:00", "to": "17:00"}],
+        "sat": [{"from": "11:00", "to": "18:00"}, {"from": "13:00", "to": "18:00", "access": "self_service"}],
+        "sun": [{"from": "13:00", "to": "18:00", "access": "self_service"}]
+      }
+    }
+  ]
+}

@@ -2,6 +2,9 @@
 Robuste OPAC-Suche für Stadtbücherei Düsseldorf (aDIS / ITK Rheinland)
 incl. Smart Watchlist, Telegram-Alerts und konfigurierbarem Cron-Scheduler.
 
+Abholplan:
+    python adis_search.py --plan-pickup --prefer-branch "Bücherei Bilk" "Sapiens"
+
 Verwendung:
     from adis_search import search_duesseldorf, summarize
 
@@ -37,6 +40,8 @@ from typing import Any, Dict, List
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
+from pickup_planner import build_pickup_plan, parse_planning_time, render_pickup_plan
+
 logger = logging.getLogger(__name__)
 
 OPAC_START = "https://opac-duesseldorf.itk-rheinland.de/"
@@ -49,6 +54,132 @@ REQUIRED_KEYS = {
     "signatur",
     "bestellmoeglichkeit",
 }
+
+LAST_SEARCH_NOTE: str | None = None
+
+
+def get_last_search_note() -> str | None:
+    """Return a non-fatal diagnostic from the most recent live search."""
+
+    return LAST_SEARCH_NOTE
+
+
+def _normalise_search_text(value: str) -> str:
+    text = (value or "").casefold().replace("_", " ")
+    text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _query_title_hints(query: str) -> list[str]:
+    """Return possible title sides, prioritising the right side of ``author - title``."""
+
+    parts = [part.strip() for part in re.split(r"\s+[-–—]\s+", query.strip(), maxsplit=1) if part.strip()]
+    if len(parts) == 2:
+        return [parts[1], parts[0]]
+    slash_parts = [part.strip() for part in query.split(" / ", 1) if part.strip()]
+    if len(slash_parts) == 2:
+        return [slash_parts[0], slash_parts[1]]
+    by_match = re.match(r"(.+?)\s+by\s+.+$", query.strip(), flags=re.IGNORECASE)
+    if by_match:
+        return [by_match.group(1).strip(), query.strip()]
+    return [query.strip()]
+
+
+def _primary_catalog_title(value: str) -> str:
+    """Remove the author/recommendation suffix from a catalog result label."""
+
+    return re.split(r"\s+/\s+|\s+-\s+", value.strip(), maxsplit=1)[0].strip()
+
+
+def _primary_title_match_score(candidate: str, hint: str) -> int:
+    candidate_text = _normalise_search_text(_primary_catalog_title(candidate))
+    hint_text = _normalise_search_text(hint)
+    if not candidate_text or not hint_text:
+        return 0
+    hint_tokens = set(hint_text.split())
+    if candidate_text == hint_text:
+        return 100
+    if hint_text in candidate_text:
+        # A one-word query must identify the beginning of the title. This
+        # rejects a different work such as "Ich bin Circe" for a query for
+        # "Circe", while still accepting catalog labels like "Circe : Roman".
+        if len(hint_tokens) == 1 and not candidate_text.startswith(hint_text):
+            return 0
+        return 90
+    candidate_tokens = set(candidate_text.split())
+    if hint_tokens and hint_tokens <= candidate_tokens:
+        if len(hint_tokens) == 1 and not candidate_text.startswith(hint_text):
+            return 0
+        return 80
+    return 0
+
+
+def _title_candidate_score(candidate: str, query: str) -> int:
+    """Score only the primary title, never a recommendation/subtitle suffix."""
+
+    return max((_primary_title_match_score(candidate, hint) for hint in _query_title_hints(query)), default=0)
+
+
+def _extract_detail_title(page: Any) -> str | None:
+    # The detail page contains several h2 headings before the actual title
+    # (session warnings, "Vollanzeige", navigation sections). Prefer the
+    # structured bibliographic field and only use a title-like heading as a
+    # fallback. This prevents a generic heading from failing verification.
+    title_rows = page.locator("table.gi tr")
+    for i in range(min(title_rows.count(), 50)):
+        cells = title_rows.nth(i).locator("td, th")
+        if cells.count() < 2:
+            continue
+        label = _normalise_search_text(cells.nth(0).inner_text())
+        if label in ("titel", "haupttitel", "titel zusatztitel"):
+            value = re.sub(r"\s+", " ", cells.nth(1).inner_text().strip())
+            if value:
+                return value[:250]
+
+    generic_headings = {
+        "vollanzeige",
+        "exemplarangaben",
+        "anleitungen",
+        "weg zum medium",
+        "merkliste befüllen leeren",
+        "weitere infos",
+    }
+    preferred: list[str] = []
+    fallback: list[str] = []
+    for selector in ["h2", "h1", ".detail-title", ".rTitle"]:
+        elements = page.locator(selector)
+        for i in range(min(elements.count(), 8)):
+            raw = elements.nth(i).inner_text().strip()
+            cleaned = re.sub(r"^Aktuelle Seite:\s*", "", raw, flags=re.IGNORECASE).strip()
+            cleaned = re.sub(r"\s+", " ", cleaned)
+            normalised = _normalise_search_text(cleaned)
+            if (
+                not cleaned
+                or len(cleaned) <= 2
+                or "sitzungsende" in normalised
+                or normalised in generic_headings
+            ):
+                continue
+            if raw.casefold().startswith("aktuelle seite") or " / " in cleaned:
+                preferred.append(cleaned)
+            else:
+                fallback.append(cleaned)
+    for candidate in preferred + fallback:
+        if candidate:
+            return candidate[:250]
+    return None
+
+
+def _wait_for_verified_detail_title(page: Any, query: str, attempts: int = 8) -> str | None:
+    """Allow the OPAC's dynamic detail fields to render before rejecting a hit."""
+
+    for attempt in range(max(1, attempts)):
+        detail_title = _extract_detail_title(page)
+        if detail_title:
+            return detail_title if _title_candidate_score(detail_title, query) else None
+        if attempt < attempts - 1:
+            page.wait_for_timeout(500)
+    return None
 
 
 def _normalize_status(raw: str) -> str:
@@ -419,6 +550,8 @@ def show_cron() -> None:
 
 
 def search_duesseldorf(titel: str, max_results: int = 5) -> List[Dict[str, Any]]:
+    global LAST_SEARCH_NOTE
+    LAST_SEARCH_NOTE = None
     if not titel or not titel.strip():
         return []
     ergebnisse: List[Dict[str, Any]] = []
@@ -439,45 +572,38 @@ def search_duesseldorf(titel: str, max_results: int = 5) -> List[Dict[str, Any]]
             on_detail = holdings_table.count() > 0 and holdings_table.first.locator("tr").count() > 1
             if not on_detail:
                 title_links = page.locator(".rList_col.rList_titel a")
-                clicked = False
-                search_words = [w.lower() for w in titel.split() if len(w) > 2][:3]
+                candidates = []
                 for i in range(min(title_links.count(), 25)):
                     link = title_links.nth(i)
                     link_text = link.inner_text().strip()
-                    link_lower = link_text.lower()
-                    if any(w in link_lower for w in search_words) or titel.lower() in link_lower:
-                        logger.debug("Klicke Treffer: %s", link_text[:80])
-                        link.click()
-                        page.wait_for_load_state("networkidle")
-                        page.wait_for_timeout(2000)
-                        clicked = True
-                        break
-                if not clicked and title_links.count() > 0:
-                    title_links.first.click()
+                    score = _title_candidate_score(link_text, titel)
+                    if score:
+                        candidates.append((score, i, link_text))
+                candidates.sort(key=lambda candidate: (-candidate[0], candidate[1]))
+                clicked = False
+                for score, index, link_text in candidates:
+                    logger.debug("Prüfe Treffer (score=%d): %s", score, link_text[:80])
+                    title_links.nth(index).click()
                     page.wait_for_load_state("networkidle")
                     page.wait_for_timeout(2000)
-            titel_voll = titel
-            for sel in ["h2", "h1", ".detail-title", ".rTitle"]:
-                els = page.locator(sel)
-                for i in range(min(els.count(), 6)):
-                    raw = els.nth(i).inner_text().strip()
-                    if not raw:
-                        continue
-                    cleaned = re.sub(r"^Aktuelle Seite:\s*", "", raw, flags=re.I).strip()
-                    if cleaned and "sitzungsende" not in cleaned.lower() and "anleitung" not in cleaned.lower():
-                        if len(cleaned) > 10:
-                            titel_voll = cleaned[:250]
-                            break
-                if titel_voll != titel:
-                    break
-            if titel_voll == titel:
-                for row in page.locator("table.gi tr").all()[:25]:
-                    cells = row.locator("td, th")
-                    if cells.count() >= 2:
-                        label = cells.nth(0).inner_text().strip().lower()
-                        if label in ("titel", "haupttitel", "titel / zusatztitel"):
-                            titel_voll = cells.nth(1).inner_text().strip()[:250]
-                            break
+                    detail_title = _wait_for_verified_detail_title(page, titel)
+                    if detail_title:
+                        clicked = True
+                        break
+                    logger.warning("Titel nicht verifiziert nach Treffer: %s", link_text[:120])
+                    try:
+                        page.go_back(wait_until="networkidle")
+                        page.wait_for_timeout(500)
+                    except Exception:
+                        break
+                if not clicked:
+                    LAST_SEARCH_NOTE = f"Titel nicht verifiziert: Kein OPAC-Treffer bestätigt den Haupttitel für {titel!r}."
+                    return ergebnisse
+
+            titel_voll = _wait_for_verified_detail_title(page, titel)
+            if not titel_voll:
+                LAST_SEARCH_NOTE = f"Titel nicht verifiziert: Kein OPAC-Treffer bestätigt den Haupttitel für {titel!r}."
+                return ergebnisse
             table = page.locator("table#resptable-1, table.rTable_table").first
             if table.count() == 0:
                 logger.warning("Keine Exemplar-Tabelle gefunden für: %s", titel)
@@ -553,7 +679,38 @@ def main() -> None:
     parser.add_argument("--from", dest="from_hour", type=int, default=8, metavar="HOUR", help="Startstunde (0-23)")
     parser.add_argument("--to", dest="to_hour", type=int, default=20, metavar="HOUR", help="Endstunde (0-23)")
     parser.add_argument("--every", type=int, default=3, metavar="HOURS", help="Intervall in Stunden")
+    parser.add_argument(
+        "--plan-pickup",
+        action="store_true",
+        help="Plant die beste Abholung anhand von Verfügbarkeit, Öffnungszeit und Filial-Präferenz",
+    )
+    parser.add_argument(
+        "--prefer-branch",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Bevorzugte Filiale; mehrfach angeben für eine Reihenfolge",
+    )
+    parser.add_argument(
+        "--at",
+        metavar="ISO-DATETIME",
+        help="Planungszeitpunkt für --plan-pickup, z. B. 2026-08-10T16:30",
+    )
+    parser.add_argument(
+        "--pickup-buffer-minutes",
+        type=int,
+        default=20,
+        metavar="MINUTES",
+        help="Mindestzeit bis zur Schließung für eine sichere Abholung (default 20)",
+    )
     args = parser.parse_args()
+
+    if args.at and not args.plan_pickup:
+        parser.error("--at kann nur zusammen mit --plan-pickup verwendet werden")
+    if args.prefer_branch and not args.plan_pickup:
+        parser.error("--prefer-branch kann nur zusammen mit --plan-pickup verwendet werden")
+    if args.pickup_buffer_minutes < 0:
+        parser.error("--pickup-buffer-minutes darf nicht negativ sein")
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.WARNING,
@@ -592,16 +749,48 @@ def main() -> None:
 
     query = " ".join(args.titel).strip() or "Harry Potter und der Stein der Weisen"
     results = search_duesseldorf(query)
+    search_note = get_last_search_note()
     if args.max > 0:
         results = results[: args.max]
     summary = summarize(results)
 
+    if args.plan_pickup:
+        try:
+            planning_time = parse_planning_time(args.at) if args.at else None
+        except ValueError as e:
+            parser.error(str(e))
+        plan = build_pickup_plan(
+            query,
+            results,
+            now=planning_time,
+            preferred_branches=args.prefer_branch,
+            minimum_pickup_minutes=args.pickup_buffer_minutes,
+        )
+        if args.json:
+            payload = {
+                "query": query,
+                "summary": summary,
+                "count": len(results),
+                "exemplare": results,
+                "pickup_plan": plan.as_dict(),
+                "search_note": search_note,
+            }
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            if search_note:
+                print(f"⚠️ {search_note}\n")
+            print(render_pickup_plan(plan))
+        return
+
     if args.json:
-        payload = {"query": query, "summary": summary, "count": len(results), "exemplare": results}
+        payload = {"query": query, "summary": summary, "count": len(results), "exemplare": results, "search_note": search_note}
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
     if not results:
+        if search_note:
+            print(f"⚠️ {search_note}")
+            return
         print("Keine Exemplare gefunden.")
         return
 
