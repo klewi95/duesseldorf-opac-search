@@ -3,6 +3,11 @@
 Robuste Python-Suche im Online-Katalog der [Stadtbüchereien Düsseldorf](https://opac-duesseldorf.itk-rheinland.de/) (aDIS)  
 incl. **Smart Watchlist**, **Telegram-Alerts** und **konfigurierbarem Cron-Scheduler**.
 
+Die Suche ist bewusst auf **gedruckte Bücher und E-Books** beschränkt.
+Hörbücher, Hörspiele, CDs, DVDs, Blu-rays, Filme und sonstige Medien werden
+bereits bei der Datensatz-Verifikation ausgeschlossen und fließen weder in
+Verfügbarkeitszahlen noch in Abholpläne ein.
+
 ## Installation
 
 ```bash
@@ -44,6 +49,34 @@ den gewünschten Titel. Wenn der Haupttitel nach dem Öffnen des OPAC-Eintrags
 nicht verifiziert werden kann, liefert die CLI ausdrücklich
 `Titel nicht verifiziert` (im JSON-Feld `search_note`) und keine erfundenen
 Exemplare.
+
+Verschiedene Ausgaben desselben Werks liegen im OPAC oft als getrennte
+Datensätze vor. Die Suche prüft deshalb alle titel- und autorverifizierten
+Datensätze und führt ihre Exemplare zusammen, bevor sie die Verfügbarkeit
+bewertet. Lektürehilfen wie `Fragen zu Corpus Delicti` werden nicht allein wegen
+enthaltener Titelwörter als der gesuchte Roman akzeptiert.
+
+### Deutsche Übersetzung als sichere Alternative
+
+Die Originalausgabe bleibt die erste Wahl. Findet die OPAC-Suche stattdessen
+eine deutsche Ausgabe mit einem anderen Titel, wird sie nur dann akzeptiert,
+wenn die strukturierten Katalogdaten alle drei Aussagen bestätigen:
+
+1. `Bevorzugter Titel` oder `Originaltitel` entspricht dem gesuchten Werk.
+2. `Verfasser` entspricht dem angegebenen Autor (Namensreihenfolge und
+   Satzzeichen spielen keine Rolle).
+3. `Sprache` ist Deutsch.
+
+So wird zum Beispiel die Suche
+
+```bash
+python3 adis_search.py --json "Beyond Redemption - Michael R. Fletcher"
+```
+
+als deutsche Übersetzung kenntlich gemacht und kann `Chroniken des Wahns -
+Blutwerk` liefern. Das JSON enthält dafür zusätzlich `trefferart`,
+`originaltitel`, `sprache` und `originalsprache`; `search_note` erklärt die
+Substitution auch für Agenten, die nur die Zusammenfassung auswerten.
 
 Beispielausgabe:
 

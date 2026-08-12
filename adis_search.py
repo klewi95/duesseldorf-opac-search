@@ -64,6 +64,10 @@ def get_last_search_note() -> str | None:
     return LAST_SEARCH_NOTE
 
 
+def _search_note_prefix(note: str) -> str:
+    return "ℹ️" if note.startswith("Deutsche Übersetzung gefunden:") else "⚠️"
+
+
 def _normalise_search_text(value: str) -> str:
     text = (value or "").casefold().replace("_", " ")
     text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
@@ -85,6 +89,162 @@ def _query_title_hints(query: str) -> list[str]:
     return [query.strip()]
 
 
+def _query_title_author_candidates(query: str) -> list[tuple[str, str | None]]:
+    """Return plausible ``(title, author)`` interpretations of a user query."""
+
+    raw = query.strip()
+    parts = [part.strip() for part in re.split(r"\s+[-–—]\s+", raw, maxsplit=1) if part.strip()]
+    if len(parts) == 2:
+        # Both "author - title" and "title - author" are common input styles.
+        return [(parts[1], parts[0]), (parts[0], parts[1])]
+    slash_parts = [part.strip() for part in raw.split(" / ", 1) if part.strip()]
+    if len(slash_parts) == 2:
+        return [(slash_parts[0], slash_parts[1])]
+    by_match = re.match(r"(.+?)\s+by\s+(.+)$", raw, flags=re.IGNORECASE)
+    if by_match:
+        return [(by_match.group(1).strip(), by_match.group(2).strip())]
+    return [(raw, None)]
+
+
+def _author_matches(candidate: str, requested: str) -> bool:
+    """Match names independent of catalogue order and punctuation."""
+
+    candidate_tokens = set(_normalise_search_text(candidate).split())
+    requested_tokens = set(_normalise_search_text(requested).split())
+    return bool(candidate_tokens and requested_tokens and requested_tokens <= candidate_tokens)
+
+
+def _extract_detail_metadata(page: Any) -> dict[str, list[str]]:
+    """Read labelled bibliographic fields from the aDIS detail table."""
+
+    metadata: dict[str, list[str]] = {}
+    rows = page.locator("table.gi tr")
+    for i in range(min(rows.count(), 80)):
+        cells = rows.nth(i).locator("td, th")
+        if cells.count() < 2:
+            continue
+        label = _normalise_search_text(cells.nth(0).inner_text())
+        value = re.sub(r"\s+", " ", cells.nth(1).inner_text().strip())
+        if label and value:
+            metadata.setdefault(label, []).append(value)
+    return metadata
+
+
+def _metadata_values(metadata: dict[str, list[str]], labels: set[str]) -> list[str]:
+    return [value for label in labels for value in metadata.get(label, [])]
+
+
+def _classify_book_media(metadata: dict[str, list[str]], detail_title: str) -> tuple[str, str] | None:
+    """Return a book media class, rejecting every non-book record by default."""
+
+    media_values = _metadata_values(
+        metadata,
+        {"medienart", "medientyp", "materialart", "materialtyp", "dokumenttyp"},
+    )
+    media_text = _normalise_search_text(" ".join(media_values))
+    title_text = _normalise_search_text(detail_title)
+    combined = f"{media_text} {title_text}"
+
+    excluded_markers = {
+        "audio",
+        "blu ray",
+        "cd",
+        "dvd",
+        "film",
+        "hörbuch",
+        "hörspiel",
+        "hoerbuch",
+        "hoerspiel",
+        "lesung",
+        "musik",
+        "tonträger",
+        "tontraeger",
+        "video",
+    }
+    if any(marker in combined for marker in excluded_markers):
+        return None
+
+    ebook_markers = {"e book", "ebook", "elektronisches buch"}
+    if any(marker in media_text for marker in ebook_markers):
+        return "e_book", media_values[0] if media_values else "E-Book"
+
+    # aDIS uses "[Band]" for printed books and occasionally the explicit
+    # labels "Buch" or "Text". Requiring a positive marker keeps unknown
+    # media out instead of guessing that they are books.
+    book_markers = {"band", "buch", "druckschrift", "text"}
+    if any(marker in media_text.split() for marker in book_markers):
+        return "buch", media_values[0] if media_values else "Buch"
+    return None
+
+
+def _classify_detail_match(page: Any, query: str) -> dict[str, str] | None:
+    """Verify an exact work or a German translation using structured metadata."""
+
+    metadata = _extract_detail_metadata(page)
+    main_titles = _metadata_values(metadata, {"titel", "haupttitel", "titel zusatztitel"})
+    detail_title = main_titles[0] if main_titles else _extract_detail_title(page)
+    if not detail_title:
+        return None
+    media = _classify_book_media(metadata, detail_title)
+    if not media:
+        return None
+    media_kind, media_label = media
+
+    authors = _metadata_values(metadata, {"verfasser", "hauptverfasser", "autor", "author"})
+    original_titles = _metadata_values(
+        metadata,
+        {
+            "bevorzugter titel",
+            "originaltitel",
+            "original title",
+            "einheitssachtitel",
+            "einheitstitel",
+        },
+    )
+    languages = _metadata_values(metadata, {"sprache"})
+    original_languages = _metadata_values(metadata, {"sprache original", "originalsprache"})
+    editions = _metadata_values(metadata, {"ausgabe"})
+
+    for requested_title, requested_author in _query_title_author_candidates(query):
+        author_ok = requested_author is None or any(
+            _author_matches(author, requested_author) for author in authors
+        )
+        if not author_ok:
+            continue
+        if _primary_title_match_score(detail_title, requested_title):
+            return {
+                "trefferart": "originaltitel",
+                "titel": detail_title,
+                "sprache": languages[0] if languages else "",
+                "originalsprache": original_languages[0] if original_languages else "",
+                "ausgabe": editions[0] if editions else "",
+                "medientyp": media_kind,
+                "medienart": media_label,
+            }
+
+        original_title = next(
+            (
+                value
+                for value in original_titles
+                if _primary_title_match_score(value, requested_title)
+            ),
+            None,
+        )
+        is_german = any("deutsch" in _normalise_search_text(value) for value in languages)
+        if original_title and is_german:
+            return {
+                "trefferart": "deutsche_uebersetzung",
+                "titel": detail_title,
+                "originaltitel": original_title,
+                "sprache": languages[0],
+                "originalsprache": original_languages[0] if original_languages else "",
+                "ausgabe": editions[0] if editions else "",
+                "medientyp": media_kind,
+                "medienart": media_label,
+            }
+    return None
+
+
 def _primary_catalog_title(value: str) -> str:
     """Remove the author/recommendation suffix from a catalog result label."""
 
@@ -100,17 +260,16 @@ def _primary_title_match_score(candidate: str, hint: str) -> int:
     if candidate_text == hint_text:
         return 100
     if hint_text in candidate_text:
-        # A one-word query must identify the beginning of the title. This
-        # rejects a different work such as "Ich bin Circe" for a query for
-        # "Circe", while still accepting catalog labels like "Circe : Roman".
-        if len(hint_tokens) == 1 and not candidate_text.startswith(hint_text):
+        # The requested title must begin the bibliographic title. This rejects
+        # related works such as "Fragen zu Corpus Delicti", "Juli Zeh, Corpus
+        # Delicti" and "Ich bin Circe" while retaining subtitle additions.
+        if not candidate_text.startswith(hint_text):
             return 0
         return 90
     candidate_tokens = set(candidate_text.split())
     if hint_tokens and hint_tokens <= candidate_tokens:
-        if len(hint_tokens) == 1 and not candidate_text.startswith(hint_text):
-            return 0
-        return 80
+        # Non-contiguous token containment is too permissive for work identity.
+        return 0
     return 0
 
 
@@ -182,6 +341,18 @@ def _wait_for_verified_detail_title(page: Any, query: str, attempts: int = 8) ->
     return None
 
 
+def _wait_for_detail_match(page: Any, query: str, attempts: int = 8) -> dict[str, str] | None:
+    """Wait for enough structured metadata to verify an exact or translated work."""
+
+    for attempt in range(max(1, attempts)):
+        match = _classify_detail_match(page, query)
+        if match:
+            return match
+        if attempt < attempts - 1:
+            page.wait_for_timeout(500)
+    return None
+
+
 def _normalize_status(raw: str) -> str:
     t = (raw or "").strip().lower()
     if not t:
@@ -211,6 +382,17 @@ def validate_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             logger.warning("Ergebnis #%d: 'titel' ungültig – übersprungen", i)
             continue
         clean = {key: (str(item.get(key) or "").strip()) for key in REQUIRED_KEYS}
+        for key in (
+            "trefferart",
+            "originaltitel",
+            "sprache",
+            "originalsprache",
+            "ausgabe",
+            "medientyp",
+            "medienart",
+        ):
+            if key in item:
+                clean[key] = str(item.get(key) or "").strip()
         validated.append(clean)
     return validated
 
@@ -549,13 +731,124 @@ def show_cron() -> None:
         print("  python adis_search.py --install-cron --from 8 --to 20 --every 3")
 
 
+def _extract_holdings(page: Any, detail_match: dict[str, str]) -> list[dict[str, Any]]:
+    """Extract every copy from one verified bibliographic record."""
+
+    results: list[dict[str, Any]] = []
+    table = page.locator("table#resptable-1, table.rTable_table").first
+    if table.count() == 0:
+        return results
+    rows = table.locator("tr")
+    if rows.count() < 2:
+        return results
+    header_cells = rows.nth(0).locator("th, td")
+    col_map: dict[str, int] = {}
+    for j in range(header_cells.count()):
+        heading = header_cells.nth(j).inner_text().strip().lower()
+        if "bibliothek" in heading:
+            col_map["bibliothek"] = j
+        elif "standort" in heading:
+            col_map["standort"] = j
+        elif "signatur" in heading:
+            col_map["signatur"] = j
+        elif "bestell" in heading:
+            col_map["bestell"] = j
+        elif "verfügbarkeit" in heading or "status" in heading:
+            col_map["status"] = j
+    col_map.setdefault("bibliothek", 0)
+    col_map.setdefault("standort", 1)
+    col_map.setdefault("signatur", 2)
+    col_map.setdefault("bestell", 3)
+    col_map.setdefault("status", 4)
+
+    for i in range(1, rows.count()):
+        cells = rows.nth(i).locator("td")
+        if cells.count() < 2:
+            continue
+
+        def cell(index: int) -> str:
+            return cells.nth(index).inner_text().strip() if index < cells.count() else ""
+
+        bibliothek = cell(col_map["bibliothek"])
+        signatur = cell(col_map["signatur"])
+        if not bibliothek and not signatur:
+            continue
+        standort = cell(col_map["standort"])
+        holding_text = _normalise_search_text(
+            " ".join((detail_match["titel"], detail_match.get("ausgabe", ""), standort, signatur))
+        )
+        excluded_holding_markers = {
+            "audio",
+            "blu ray",
+            "dvd",
+            "filme",
+            "gelesen von",
+            "hörbuch",
+            "hörspiel",
+            "lesung",
+        }
+        holding_tokens = set(holding_text.split())
+        if (
+            any(marker in holding_text for marker in excluded_holding_markers)
+            or "cd" in holding_tokens
+            or "bd" in holding_tokens
+            or "dvdv" in holding_tokens
+        ):
+            continue
+        result: dict[str, Any] = {
+            "titel": detail_match["titel"],
+            "status": _normalize_status(cell(col_map["status"])),
+            "bibliothek": bibliothek,
+            "standort": standort,
+            "signatur": signatur,
+            "bestellmoeglichkeit": cell(col_map["bestell"]),
+        }
+        result.update(detail_match)
+        results.append(result)
+    return results
+
+
+def _deduplicate_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    unique: list[dict[str, Any]] = []
+    seen: set[tuple[str, ...]] = set()
+    for result in results:
+        key = tuple(
+            str(result.get(field) or "").strip()
+            for field in ("titel", "ausgabe", "bibliothek", "standort", "signatur", "status")
+        )
+        if key not in seen:
+            seen.add(key)
+            unique.append(result)
+    return unique
+
+
+def _has_available_copy(results: list[dict[str, Any]]) -> bool:
+    return any((result.get("status") or "").casefold() == "verfügbar" for result in results)
+
+
+def _select_edition_results(
+    exact_results: list[dict[str, Any]],
+    translation_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Prefer an available requested edition, then an available translation."""
+
+    exact_results = _deduplicate_results(exact_results)
+    translation_results = _deduplicate_results(translation_results)
+    if _has_available_copy(exact_results):
+        return exact_results
+    if _has_available_copy(translation_results):
+        return translation_results
+    return exact_results or translation_results
+
+
 def search_duesseldorf(titel: str, max_results: int = 5) -> List[Dict[str, Any]]:
     global LAST_SEARCH_NOTE
     LAST_SEARCH_NOTE = None
     if not titel or not titel.strip():
         return []
-    ergebnisse: List[Dict[str, Any]] = []
     titel = titel.strip()
+    exact_results: list[dict[str, Any]] = []
+    translation_results: list[dict[str, Any]] = []
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
@@ -570,94 +863,76 @@ def search_duesseldorf(titel: str, max_results: int = 5) -> List[Dict[str, Any]]
             page.wait_for_timeout(1500)
             holdings_table = page.locator("table#resptable-1, table.rTable_table")
             on_detail = holdings_table.count() > 0 and holdings_table.first.locator("tr").count() > 1
-            if not on_detail:
+            if on_detail:
+                detail_match = _wait_for_detail_match(page, titel)
+                if detail_match:
+                    bucket = translation_results if detail_match.get("trefferart") == "deutsche_uebersetzung" else exact_results
+                    bucket.extend(_extract_holdings(page, detail_match))
+            else:
                 title_links = page.locator(".rList_col.rList_titel a")
-                candidates = []
+                candidates: list[tuple[int, int, str]] = []
                 for i in range(min(title_links.count(), 25)):
-                    link = title_links.nth(i)
-                    link_text = link.inner_text().strip()
-                    score = _title_candidate_score(link_text, titel)
-                    if score:
-                        candidates.append((score, i, link_text))
-                candidates.sort(key=lambda candidate: (-candidate[0], candidate[1]))
-                clicked = False
-                for score, index, link_text in candidates:
+                    link_text = title_links.nth(i).inner_text().strip()
+                    candidates.append((_title_candidate_score(link_text, titel), i, link_text))
+
+                strong = sorted(
+                    (candidate for candidate in candidates if candidate[0]),
+                    key=lambda candidate: (-candidate[0], candidate[1]),
+                )
+                weak = [candidate for candidate in candidates if not candidate[0]]
+
+                def inspect(candidate: tuple[int, int, str]) -> bool:
+                    score, index, link_text = candidate
                     logger.debug("Prüfe Treffer (score=%d): %s", score, link_text[:80])
-                    title_links.nth(index).click()
+                    links = page.locator(".rList_col.rList_titel a")
+                    if index >= links.count():
+                        return False
+                    links.nth(index).click()
                     page.wait_for_load_state("networkidle")
-                    page.wait_for_timeout(2000)
-                    detail_title = _wait_for_verified_detail_title(page, titel)
-                    if detail_title:
-                        clicked = True
-                        break
-                    logger.warning("Titel nicht verifiziert nach Treffer: %s", link_text[:120])
+                    page.wait_for_timeout(800)
+                    detail_match = _wait_for_detail_match(page, titel)
+                    if detail_match:
+                        bucket = translation_results if detail_match.get("trefferart") == "deutsche_uebersetzung" else exact_results
+                        bucket.extend(_extract_holdings(page, detail_match))
+                    else:
+                        logger.warning("Titel nicht verifiziert nach Treffer: %s", link_text[:120])
                     try:
                         page.go_back(wait_until="networkidle")
-                        page.wait_for_timeout(500)
+                        page.wait_for_timeout(300)
+                        page.wait_for_selector(".rList_col.rList_titel a", state="visible", timeout=8000)
                     except Exception:
-                        break
-                if not clicked:
-                    LAST_SEARCH_NOTE = f"Titel nicht verifiziert: Kein OPAC-Treffer bestätigt den Haupttitel für {titel!r}."
-                    return ergebnisse
+                        return False
+                    return True
 
-            titel_voll = _wait_for_verified_detail_title(page, titel)
-            if not titel_voll:
-                LAST_SEARCH_NOTE = f"Titel nicht verifiziert: Kein OPAC-Treffer bestätigt den Haupttitel für {titel!r}."
-                return ergebnisse
-            table = page.locator("table#resptable-1, table.rTable_table").first
-            if table.count() == 0:
-                logger.warning("Keine Exemplar-Tabelle gefunden für: %s", titel)
-                return ergebnisse
-            rows = table.locator("tr")
-            header_cells = rows.nth(0).locator("th, td")
-            col_map = {}
-            for j in range(header_cells.count()):
-                h = header_cells.nth(j).inner_text().strip().lower()
-                if "bibliothek" in h:
-                    col_map["bibliothek"] = j
-                elif "standort" in h:
-                    col_map["standort"] = j
-                elif "signatur" in h:
-                    col_map["signatur"] = j
-                elif "bestell" in h:
-                    col_map["bestell"] = j
-                elif "verfügbarkeit" in h or "status" in h:
-                    col_map["status"] = j
-            col_map.setdefault("bibliothek", 0)
-            col_map.setdefault("standort", 1)
-            col_map.setdefault("signatur", 2)
-            col_map.setdefault("bestell", 3)
-            col_map.setdefault("status", 4)
-            for i in range(1, rows.count()):
-                cells = rows.nth(i).locator("td")
-                if cells.count() < 2:
-                    continue
-                def cell(idx: int) -> str:
-                    if idx < cells.count():
-                        return cells.nth(idx).inner_text().strip()
-                    return ""
-                bibliothek = cell(col_map["bibliothek"])
-                standort = cell(col_map["standort"])
-                signatur = cell(col_map["signatur"])
-                bestell = cell(col_map.get("bestell", 3))
-                status_raw = cell(col_map["status"])
-                if not bibliothek and not signatur:
-                    continue
-                ergebnisse.append({
-                    "titel": titel_voll,
-                    "status": _normalize_status(status_raw),
-                    "bibliothek": bibliothek,
-                    "standort": standort,
-                    "signatur": signatur,
-                    "bestellmoeglichkeit": bestell,
-                })
+                # Aggregate every title-shaped record: distinct editions are
+                # separate OPAC records and may have different availability.
+                for candidate in strong:
+                    if not inspect(candidate):
+                        break
+
+                # Only spend the broader scan when no requested edition is
+                # available; differently titled translations score zero here.
+                if not _has_available_copy(exact_results):
+                    for candidate in weak:
+                        if not inspect(candidate):
+                            break
         except PlaywrightTimeout as e:
             logger.error("Timeout bei OPAC-Suche für '%s': %s", titel, e)
         except Exception as e:
             logger.exception("Fehler bei OPAC-Suche für '%s': %s", titel, e)
         finally:
             browser.close()
-    return validate_results(ergebnisse)
+
+    selected = _select_edition_results(exact_results, translation_results)
+    if selected and selected[0].get("trefferart") == "deutsche_uebersetzung":
+        first = selected[0]
+        LAST_SEARCH_NOTE = (
+            f"Deutsche Übersetzung gefunden: {first['titel']} "
+            f"(Originaltitel: {first.get('originaltitel', titel)})."
+        )
+    elif not selected:
+        LAST_SEARCH_NOTE = f"Titel nicht verifiziert: Kein OPAC-Treffer bestätigt den Haupttitel für {titel!r}."
+    return validate_results(selected)
 
 
 def main() -> None:
@@ -778,7 +1053,7 @@ def main() -> None:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
             if search_note:
-                print(f"⚠️ {search_note}\n")
+                print(f"{_search_note_prefix(search_note)} {search_note}\n")
             print(render_pickup_plan(plan))
         return
 
@@ -789,7 +1064,7 @@ def main() -> None:
 
     if not results:
         if search_note:
-            print(f"⚠️ {search_note}")
+            print(f"{_search_note_prefix(search_note)} {search_note}")
             return
         print("Keine Exemplare gefunden.")
         return
@@ -797,6 +1072,8 @@ def main() -> None:
     titel = results[0]["titel"]
     print(f"📖 {titel}")
     print(f"   {summary}\n")
+    if search_note:
+        print(f"   {_search_note_prefix(search_note)} {search_note}\n")
     for r in results:
         print(f"   • {r['bibliothek']} – {r['standort']}")
         print(f"     {r['signatur']}  →  {r['status']}")
