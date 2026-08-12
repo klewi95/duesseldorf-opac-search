@@ -114,6 +114,110 @@ def _author_matches(candidate: str, requested: str) -> bool:
     return bool(candidate_tokens and requested_tokens and requested_tokens <= candidate_tokens)
 
 
+def _responsibility_author(detail_title: str) -> str | None:
+    """Extract the primary responsibility after ``/`` from a catalog title."""
+
+    if " / " not in detail_title:
+        return None
+    responsibility = detail_title.split(" / ", 1)[1].split(";", 1)[0].strip()
+    responsibility = re.sub(r"^(?:von|by)\s+", "", responsibility, flags=re.IGNORECASE)
+    normalised = _normalise_search_text(responsibility)
+    non_author_markers = {
+        "bearbeitet von",
+        "deutsch von",
+        "gelesen von",
+        "herausgegeben von",
+        "illustrationen",
+        "regie",
+        "translated by",
+        "übersetzt von",
+    }
+    if not responsibility or any(marker in normalised for marker in non_author_markers):
+        return None
+    return responsibility
+
+
+def _verify_author(
+    metadata: dict[str, list[str]],
+    detail_title: str,
+    requested_author: str | None,
+) -> tuple[str, str] | None:
+    """Verify an author using structured data, then conservative fallbacks."""
+
+    if requested_author is None:
+        return "not_requested", ""
+
+    structured = _metadata_values(metadata, {"verfasser", "hauptverfasser", "autor", "author"})
+    if structured:
+        for author in structured:
+            if _author_matches(author, requested_author):
+                return "structured", author
+        # A conflicting structured creator must never be overridden by text.
+        return None
+
+    role_authors: list[str] = []
+    for person in _metadata_values(metadata, {"person"}):
+        for name, role_label in re.findall(r"([^[]+?)\s*\[([^]]+)]", person):
+            role = _normalise_search_text(role_label)
+            if "verfasser" in role or " autor " in f" {role} ":
+                role_authors.append(name.strip())
+    for author in role_authors:
+        if _author_matches(author, requested_author):
+            return "person_role", author
+    if role_authors:
+        return None
+
+    responsibility = _responsibility_author(detail_title)
+    if responsibility and _author_matches(responsibility, requested_author):
+        return "title_responsibility", responsibility
+    return None
+
+
+TRANSLATION_ALIASES_FILE = Path(__file__).resolve().parent / "translation_aliases.json"
+
+
+def _load_translation_aliases() -> list[dict[str, Any]]:
+    try:
+        data = json.loads(TRANSLATION_ALIASES_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        logger.warning("Übersetzungs-Aliasdatei konnte nicht gelesen werden: %s", error)
+        return []
+    aliases = data.get("aliases", []) if isinstance(data, dict) else []
+    return [alias for alias in aliases if isinstance(alias, dict)]
+
+
+def _verified_translation_alias(
+    metadata: dict[str, list[str]],
+    detail_title: str,
+    requested_title: str,
+    requested_author: str | None,
+) -> dict[str, str] | None:
+    """Match a translated title through a provenance-bearing verified alias."""
+
+    for alias in _load_translation_aliases():
+        original_title = str(alias.get("original_title") or "").strip()
+        alias_author = str(alias.get("author") or "").strip()
+        if _primary_title_match_score(original_title, requested_title) < 90:
+            continue
+        if requested_author and not _author_matches(alias_author, requested_author):
+            continue
+        if not alias_author or not _verify_author(metadata, detail_title, alias_author):
+            continue
+        for translation in alias.get("translations", []):
+            if not isinstance(translation, dict):
+                continue
+            translated_title = str(translation.get("title") or "").strip()
+            language = str(translation.get("language") or "").strip()
+            if translated_title and _primary_title_match_score(detail_title, translated_title):
+                return {
+                    "originaltitel": original_title,
+                    "uebersetzungs_match": "verified_alias",
+                    "uebersetzungsquelle": str(alias.get("source") or "verified alias"),
+                    "alias_sprache": language,
+                }
+    return None
+
+
 def _extract_detail_metadata(page: Any) -> dict[str, list[str]]:
     """Read labelled bibliographic fields from the aDIS detail table."""
 
@@ -190,7 +294,6 @@ def _classify_detail_match(page: Any, query: str) -> dict[str, str] | None:
         return None
     media_kind, media_label = media
 
-    authors = _metadata_values(metadata, {"verfasser", "hauptverfasser", "autor", "author"})
     original_titles = _metadata_values(
         metadata,
         {
@@ -206,15 +309,16 @@ def _classify_detail_match(page: Any, query: str) -> dict[str, str] | None:
     editions = _metadata_values(metadata, {"ausgabe"})
 
     for requested_title, requested_author in _query_title_author_candidates(query):
-        author_ok = requested_author is None or any(
-            _author_matches(author, requested_author) for author in authors
-        )
-        if not author_ok:
+        author_verification = _verify_author(metadata, detail_title, requested_author)
+        if not author_verification:
             continue
+        author_match, verified_author = author_verification
         if _primary_title_match_score(detail_title, requested_title):
             return {
                 "trefferart": "originaltitel",
                 "titel": detail_title,
+                "autor_match": author_match,
+                "verifizierter_autor": verified_author,
                 "sprache": languages[0] if languages else "",
                 "originalsprache": original_languages[0] if original_languages else "",
                 "ausgabe": editions[0] if editions else "",
@@ -235,12 +339,40 @@ def _classify_detail_match(page: Any, query: str) -> dict[str, str] | None:
             return {
                 "trefferart": "deutsche_uebersetzung",
                 "titel": detail_title,
+                "autor_match": author_match,
+                "verifizierter_autor": verified_author,
                 "originaltitel": original_title,
                 "sprache": languages[0],
                 "originalsprache": original_languages[0] if original_languages else "",
                 "ausgabe": editions[0] if editions else "",
                 "medientyp": media_kind,
                 "medienart": media_label,
+            }
+
+        alias = (
+            _verified_translation_alias(
+                metadata,
+                detail_title,
+                requested_title,
+                requested_author,
+            )
+            if is_german
+            else None
+        )
+        if alias:
+            return {
+                "trefferart": "deutsche_uebersetzung",
+                "titel": detail_title,
+                "autor_match": author_match,
+                "verifizierter_autor": verified_author,
+                "originaltitel": alias["originaltitel"],
+                "sprache": languages[0] if languages else alias.get("alias_sprache", "Deutsch"),
+                "originalsprache": original_languages[0] if original_languages else "",
+                "ausgabe": editions[0] if editions else "",
+                "medientyp": media_kind,
+                "medienart": media_label,
+                "uebersetzungs_match": alias["uebersetzungs_match"],
+                "uebersetzungsquelle": alias["uebersetzungsquelle"],
             }
     return None
 
@@ -390,6 +522,10 @@ def validate_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "ausgabe",
             "medientyp",
             "medienart",
+            "autor_match",
+            "verifizierter_autor",
+            "uebersetzungs_match",
+            "uebersetzungsquelle",
         ):
             if key in item:
                 clean[key] = str(item.get(key) or "").strip()

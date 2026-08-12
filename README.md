@@ -78,6 +78,17 @@ Blutwerk` liefern. Das JSON enthält dafür zusätzlich `trefferart`,
 `originaltitel`, `sprache` und `originalsprache`; `search_note` erklärt die
 Substitution auch für Agenten, die nur die Zusammenfassung auswerten.
 
+Fehlt `Verfasser`, nutzt die Suche zunächst eine als Verfasser/in markierte
+`Person` und erst danach die primäre Verantwortlichkeitsangabe hinter `/` im
+Katalogtitel. Ein vorhandener, aber widersprechender strukturierter Verfasser
+kann durch diese Fallbacks nicht überschrieben werden; Regie, Bearbeitung,
+Lesung und Übersetzung gelten nicht als Autorschaft.
+
+Manche Übersetzungsdatensätze enthalten keinen bevorzugten oder originalen
+Titel. Dafür kann `translation_aliases.json` geprüfte Titelpaare mit Autor und
+Quelle hinterlegen. Ein Alias erzeugt nur dann einen Treffer, wenn zusätzlich
+Autor, Zieltitel, Sprache und Medientyp des geöffneten OPAC-Datensatzes passen.
+
 Beispielausgabe:
 
 ```text

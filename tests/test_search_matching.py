@@ -124,6 +124,101 @@ class SearchMatchingTests(unittest.TestCase):
 
         self.assertIsNone(adis_search._classify_detail_match(page, "Beyond Redemption - Someone Else"))
 
+    def test_missing_verfasser_uses_primary_title_responsibility(self) -> None:
+        page = _FakePage(
+            {
+                "table.gi tr": [
+                    _FakeElement(children=[_FakeElement("Medienart"), _FakeElement("[Buch]")]),
+                    _FakeElement(
+                        children=[
+                            _FakeElement("Titel"),
+                            _FakeElement("Am kürzeren Ende der Sonnenallee / Thomas Brussig"),
+                        ]
+                    ),
+                    _FakeElement(children=[_FakeElement("Sprache"), _FakeElement("Deutsch")]),
+                ]
+            }
+        )
+
+        match = adis_search._classify_detail_match(
+            page,
+            "Am kürzeren Ende der Sonnenallee - Thomas Brussig",
+        )
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match["autor_match"], "title_responsibility")
+        self.assertEqual(match["verifizierter_autor"], "Thomas Brussig")
+
+    def test_conflicting_structured_author_blocks_title_fallback(self) -> None:
+        page = _FakePage(
+            {
+                "table.gi tr": [
+                    _FakeElement(children=[_FakeElement("Medienart"), _FakeElement("[Buch]")]),
+                    _FakeElement(children=[_FakeElement("Titel"), _FakeElement("Corpus Delicti / Juli Zeh")]),
+                    _FakeElement(children=[_FakeElement("Verfasser"), _FakeElement("Leis, Mario")]),
+                ]
+            }
+        )
+
+        self.assertIsNone(adis_search._classify_detail_match(page, "Corpus Delicti - Juli Zeh"))
+
+    def test_translator_responsibility_is_not_treated_as_author(self) -> None:
+        self.assertIsNone(
+            adis_search._responsibility_author("Von Mäusen und Menschen / Deutsch von Mirjam Pressler")
+        )
+
+    def test_person_roles_keep_author_separate_from_translator(self) -> None:
+        metadata = {
+            "person": [
+                "Steinbeck, John [Verfasser/in] Pressler, Mirjam [Übersetzer/in]"
+            ]
+        }
+
+        self.assertEqual(
+            adis_search._verify_author(metadata, "Von Mäusen und Menschen", "John Steinbeck"),
+            ("person_role", "Steinbeck, John"),
+        )
+        self.assertIsNone(
+            adis_search._verify_author(metadata, "Von Mäusen und Menschen", "Mirjam Pressler")
+        )
+
+    def test_verified_alias_connects_english_title_to_german_translation(self) -> None:
+        page = _FakePage(
+            {
+                "table.gi tr": [
+                    _FakeElement(children=[_FakeElement("Medienart"), _FakeElement("[Buch]")]),
+                    _FakeElement(
+                        children=[
+                            _FakeElement("Titel"),
+                            _FakeElement("Von Mäusen und Menschen : Roman / John Steinbeck ; Deutsch von Mirjam Pressler"),
+                        ]
+                    ),
+                    _FakeElement(children=[_FakeElement("Sprache"), _FakeElement("Deutsch")]),
+                    _FakeElement(children=[_FakeElement("Sprache Original"), _FakeElement("Englisch")]),
+                ]
+            }
+        )
+
+        match = adis_search._classify_detail_match(page, "Of Mice and Men - John Steinbeck")
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match["trefferart"], "deutsche_uebersetzung")
+        self.assertEqual(match["originaltitel"], "Of Mice and Men")
+        self.assertEqual(match["uebersetzungs_match"], "verified_alias")
+
+    def test_alias_does_not_accept_an_unrelated_book_by_same_author(self) -> None:
+        page = _FakePage(
+            {
+                "table.gi tr": [
+                    _FakeElement(children=[_FakeElement("Medienart"), _FakeElement("[Buch]")]),
+                    _FakeElement(children=[_FakeElement("Titel"), _FakeElement("Früchte des Zorns / John Steinbeck")]),
+                    _FakeElement(children=[_FakeElement("Sprache"), _FakeElement("Deutsch")]),
+                ]
+            }
+        )
+
+        self.assertIsNone(adis_search._classify_detail_match(page, "Of Mice and Men - John Steinbeck"))
+
     def test_print_book_and_ebook_are_accepted_media(self) -> None:
         print_metadata = {"medienart": ["[Band]"]}
         ebook_metadata = {"medienart": ["E-Book"]}

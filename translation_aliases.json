@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "aliases": [
+    {
+      "original_title": "Of Mice and Men",
+      "author": "John Steinbeck",
+      "translations": [
+        {
+          "language": "Deutsch",
+          "title": "Von Mäusen und Menschen"
+        }
+      ],
+      "source": "Stadtbüchereien Düsseldorf OPAC, live verified 2026-08-12"
+    }
+  ]
+}
